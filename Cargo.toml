@@ -1,0 +1,30 @@
+[package]
+name = "jntuh-api-rust"
+version = "2.0.0"
+edition = "2021"
+description = "High-performance JNTUH Results API in Rust"
+authors = ["opencode"]
+license = "MIT"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
+[dependencies]
+axum = { version = "0.8", features = ["macros"] }
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["cookies", "json"] }
+scraper = "0.21"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tower-http = { version = "0.6", features = ["cors", "compression-gzip", "request-id", "timeout"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
+chrono = { version = "0.4", features = ["serde"] }
+futures = "0.3"
+parking_lot = "0.12"
+uuid = { version = "1", features = ["v4"] }
