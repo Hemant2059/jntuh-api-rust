@@ -7,13 +7,15 @@ use axum::http::{HeaderName, Method};
 use axum::routing::get;
 use axum::{Json, Router};
 use reqwest::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::signal;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::request_id::{MakeRequestUuid, SetRequestIdLayer};
 use tower_http::timeout::TimeoutLayer;
 use tower_http::compression::CompressionLayer;
 use tracing_subscriber::EnvFilter;
+use utoipa::{IntoParams, OpenApi, ToSchema};
+use utoipa_swagger_ui::SwaggerUi;
 
 mod types;
 use types::*;
@@ -51,11 +53,85 @@ struct AppState {
     specific_results: Arc<SpecificResultService>,
 }
 
+#[derive(Serialize, ToSchema)]
+struct RootResponse {
+    message: String,
+    version: String,
+    rust: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+struct HealthResponse {
+    status: String,
+}
+
+#[derive(Serialize, ToSchema)]
+struct RefreshCodesResponse {
+    status: String,
+    message: String,
+    codes_count: usize,
+}
+
+#[derive(Serialize, ToSchema)]
+struct RefreshCacheResponse {
+    status: String,
+    message: String,
+}
+
 fn load_config() -> (String, String) {
     let port = std::env::var("PORT").unwrap_or_else(|_| "8000".to_string());
     let exam_codes_path = std::env::var("EXAM_CODES_PATH").unwrap_or_else(|_| "exam_codes.json".to_string());
     (port, exam_codes_path)
 }
+
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "JNTUH Results API",
+        description = "High-performance API for fetching JNTUH exam results, including semester results, academic history, class results, and notifications.",
+        version = "2.0.0",
+    ),
+    paths(
+        root,
+        health,
+        get_sem_result,
+        get_academic_results,
+        get_all_results,
+        get_class_results,
+        get_notifications,
+        refresh_codes,
+        refresh_cache,
+        get_specific_result,
+    ),
+    components(
+        schemas(
+            RootResponse,
+            HealthResponse,
+            RefreshCodesResponse,
+            RefreshCacheResponse,
+            SubjectResult,
+            StudentDetails,
+            SemesterResult,
+            ExamAttempt,
+            SemesterResultData,
+            GpaDetails,
+            CombinedSemesterResult,
+            AcademicResponse,
+            SemesterSummary,
+            AllResultResponse,
+            DetailedExamEntry,
+            ClassResultEntry,
+            Notification,
+        )
+    ),
+    tags(
+        (name = "Results", description = "Semester and academic result endpoints"),
+        (name = "Batch", description = "Class/batch result endpoints"),
+        (name = "Admin", description = "Admin and maintenance endpoints"),
+        (name = "Notifications", description = "JNTUH notification endpoints"),
+    ),
+)]
+struct ApiDoc;
 
 #[tokio::main]
 async fn main() {
@@ -119,6 +195,7 @@ async fn main() {
         .route("/refresh-codes", get(refresh_codes))
         .route("/refresh-cache", get(refresh_cache))
         .route("/specificresult", get(get_specific_result))
+        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .layer(TimeoutLayer::with_status_code(axum::http::StatusCode::GATEWAY_TIMEOUT, Duration::from_secs(120)))
         .layer(CompressionLayer::new().gzip(true))
         .layer(SetRequestIdLayer::new(HeaderName::from_static("x-request-id"), MakeRequestUuid))
@@ -163,24 +240,46 @@ async fn shutdown_signal() {
     }
 }
 
-async fn root() -> Json<serde_json::Value> {
-    Json(serde_json::json!({
-        "message": "JNTUH Results API is running",
-        "version": "2.0",
-        "rust": true
-    }))
+#[utoipa::path(
+    get,
+    path = "/",
+    responses(
+        (status = 200, description = "API is running", body = RootResponse),
+    )
+)]
+async fn root() -> Json<RootResponse> {
+    Json(RootResponse {
+        message: "JNTUH Results API is running".into(),
+        version: "2.0".into(),
+        rust: true,
+    })
 }
 
-async fn health() -> Json<serde_json::Value> {
-    Json(serde_json::json!({"status": "ok"}))
+#[utoipa::path(
+    get,
+    path = "/health",
+    responses(
+        (status = 200, description = "Health check", body = HealthResponse),
+    )
+)]
+async fn health() -> Json<HealthResponse> {
+    Json(HealthResponse { status: "ok".into() })
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
 struct SemParams {
     htno: String,
     sem: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/sem",
+    params(SemParams),
+    responses(
+        (status = 200, description = "Semester result with SGPA and history", body = CombinedSemesterResult),
+    )
+)]
 async fn get_sem_result(
     state: axum::extract::State<AppState>,
     Query(params): Query<SemParams>,
@@ -189,11 +288,19 @@ async fn get_sem_result(
     Json(result)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
 struct AcademicParams {
     htno: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/academic",
+    params(AcademicParams),
+    responses(
+        (status = 200, description = "Complete academic history with CGPA across all semesters", body = AcademicResponse),
+    )
+)]
 async fn get_academic_results(
     state: axum::extract::State<AppState>,
     Query(params): Query<AcademicParams>,
@@ -202,11 +309,19 @@ async fn get_academic_results(
     Json(result)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
 struct AllResultParams {
     htno: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/allresult",
+    params(AllResultParams),
+    responses(
+        (status = 200, description = "Detailed results grouped by semester with all exam attempts (regular, supply, RCRV)", body = AllResultResponse),
+    )
+)]
 async fn get_all_results(
     state: axum::extract::State<AppState>,
     Query(params): Query<AllResultParams>,
@@ -215,7 +330,7 @@ async fn get_all_results(
     Json(result)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
 struct ClassResultParams {
     sem: String,
     start_htno: String,
@@ -226,6 +341,14 @@ struct ClassResultParams {
 
 fn default_concurrency() -> usize { 20 }
 
+#[utoipa::path(
+    get,
+    path = "/classresult",
+    params(ClassResultParams),
+    responses(
+        (status = 200, description = "Batch results for a class/section within a roll number range", body = HashMap<String, ClassResultEntry>),
+    )
+)]
 async fn get_class_results(
     state: axum::extract::State<AppState>,
     Query(params): Query<ClassResultParams>,
@@ -236,12 +359,20 @@ async fn get_class_results(
     Json(results)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
 struct NotificationParams {
     #[serde(default)]
     refresh: bool,
 }
 
+#[utoipa::path(
+    get,
+    path = "/notifications",
+    params(NotificationParams),
+    responses(
+        (status = 200, description = "Latest notifications from JNTUH home page", body = Vec<Notification>),
+    )
+)]
 async fn get_notifications(
     state: axum::extract::State<AppState>,
     Query(params): Query<NotificationParams>,
@@ -250,30 +381,44 @@ async fn get_notifications(
     Json(result)
 }
 
+#[utoipa::path(
+    get,
+    path = "/refresh-codes",
+    responses(
+        (status = 200, description = "Refresh exam codes from JNTUH", body = RefreshCodesResponse),
+    )
+)]
 async fn refresh_codes(
     state: axum::extract::State<AppState>,
-) -> Json<serde_json::Value> {
+) -> Json<RefreshCodesResponse> {
     state.exam_codes.refresh(&state.client).await;
     let count = state.exam_codes.total_codes().await;
 
-    Json(serde_json::json!({
-        "status": "success",
-        "message": "Exam codes refreshed",
-        "codes_count": count
-    }))
+    Json(RefreshCodesResponse {
+        status: "success".into(),
+        message: "Exam codes refreshed".into(),
+        codes_count: count,
+    })
 }
 
+#[utoipa::path(
+    get,
+    path = "/refresh-cache",
+    responses(
+        (status = 200, description = "Clear cached semester results from memory", body = RefreshCacheResponse),
+    )
+)]
 async fn refresh_cache(
     state: axum::extract::State<AppState>,
-) -> Json<serde_json::Value> {
+) -> Json<RefreshCacheResponse> {
     state.sem_results.clear_cache().await;
-    Json(serde_json::json!({
-        "status": "success",
-        "message": "Cleared cached results from memory"
-    }))
+    Json(RefreshCacheResponse {
+        status: "success".into(),
+        message: "Cleared cached results from memory".into(),
+    })
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
 struct SpecificResultParams {
     exam_code: String,
     etype: String,
@@ -285,6 +430,14 @@ struct SpecificResultParams {
     htno: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/specificresult",
+    params(SpecificResultParams),
+    responses(
+        (status = 200, description = "Raw result from JNTUH for a specific exam configuration", body = serde_json::Value),
+    )
+)]
 async fn get_specific_result(
     state: axum::extract::State<AppState>,
     Query(params): Query<SpecificResultParams>,
