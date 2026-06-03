@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM rust:1.85-slim-bookworm AS builder
+FROM rust:slim-bookworm AS builder
 
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 
@@ -16,7 +16,7 @@ RUN cargo build --release
 # Stage 2: Run
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/lib/apt/lists/* && apt-get clean
 
 WORKDIR /app
 COPY --from=builder /app/target/release/jntuh-api-rust .
