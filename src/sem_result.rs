@@ -170,7 +170,7 @@ impl SemResultService {
                 "regular" => combined.extend(exam.result.result.clone()),
                 "supply" => {
                     for (sub, data) in &exam.result.result {
-                        if data.grade != "F" && data.grade != "Ab" {
+                        if (data.grade != "F" && data.grade != "Ab") && combined.contains_key(sub) {
                             combined.insert(sub.clone(), data.clone());
                         }
                     }
