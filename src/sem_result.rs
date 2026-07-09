@@ -351,9 +351,9 @@ impl SemResultService {
 
     fn calculate_sgpa(res: &HashMap<String, SubjectResult>, degree: &str, reg: &str) -> GpaDetails {
         let gp = |g: &str| -> f64 {
-            // R22 grading with O/A/B/C/D only applies to B.Pharmacy R22
+            // R22+ B.Pharmacy uses O/A/B/C/D grading (no + grades)
             // All other degrees/regulations use O/A+/A/B+/B/C grading
-            if reg == "R22" && degree == "bpharmacy" {
+            if degree == "bpharmacy" && (reg == "R22" || reg == "R25") {
                 match g { "O" => 10.0, "A" => 9.0, "B" => 8.0, "C" => 7.0, "D" => 6.0, "F" | "Ab" => 0.0, _ => 0.0 }
             } else {
                 match g { "O" => 10.0, "A+" => 9.0, "A" => 8.0, "B+" => 7.0, "B" => 6.0, "C" => 5.0, "F" | "Ab" => 0.0, _ => 0.0 }
