@@ -89,25 +89,28 @@ fn parse_notifications(html: &str) -> Vec<Notification> {
 
     let re_slug = Regex::new(r"[^a-z0-9\s-]").unwrap();
     let re_roman = Regex::new(r"(?i)\b(I|II|III|IV)\s*-\s*(I|II)\s*(Year|Semester)?").unwrap();
-    let re_regulation = Regex::new(r"\(?(R\d{2})\)?").unwrap();
+    let re_regulation = Regex::new(r"\(?(R\d{2,3})\)?").unwrap();
     let re_exam_date = Regex::new(r"([A-Za-z]+[- ]\d{4})").unwrap();
 
-    if let Some(table) = doc.select(&table_sel).nth(2) {
+    // Iterate ALL tables (matching Python behavior)
+    for table in doc.select(&table_sel) {
         for row in table.select(&row_sel) {
             let tds: Vec<_> = row.select(&td_sel).collect();
             if tds.len() < 2 { continue; }
 
-            let date = tds[0].text().collect::<String>().trim().to_string();
-            let link = tds[1].select(&link_sel).next()
+            // Python looks for link in FIRST td, date in SECOND td
+            let link = tds[0].select(&link_sel).next()
                 .and_then(|a| a.value().attr("href"))
                 .map(|h| {
                     if h.starts_with("http") { h.to_string() }
                     else { format!("http://results.jntuh.ac.in{}", h) }
                 })
                 .unwrap_or_default();
-            let title = tds[1].text().collect::<String>().trim().to_string();
+            let title = tds[0].text().collect::<String>().trim().to_string();
+            let date = tds[1].text().collect::<String>().trim().to_string();
 
-            if title.is_empty() { continue; }
+            // Skip if no link found or title is empty
+            if link.is_empty() || title.is_empty() { continue; }
 
             let upper = title.to_uppercase();
 

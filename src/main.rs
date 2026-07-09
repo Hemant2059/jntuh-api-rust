@@ -420,6 +420,7 @@ async fn refresh_cache(
 
 #[derive(Deserialize, IntoParams)]
 struct SpecificResultParams {
+    #[serde(rename = "examCode")]
     exam_code: String,
     etype: String,
     result: String,
