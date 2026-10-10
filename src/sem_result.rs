@@ -17,11 +17,14 @@ struct ExamCodeInfo {
     year: i32,
 }
 
+/// (htno, sem) -> (cached result, fetch time)
+type ResultCache = HashMap<(String, String), (CombinedSemesterResult, Instant)>;
+
 pub struct SemResultService {
     client: Client,
     exam_codes: Arc<ExamCodes>,
     url: String,
-    cache: Arc<Mutex<HashMap<(String, String), (CombinedSemesterResult, Instant)>>>,
+    cache: Arc<Mutex<ResultCache>>,
     cache_ttl: Duration,
 }
 
@@ -156,7 +159,7 @@ impl SemResultService {
 
         let has_regular = sem_codes
             .values()
-            .any(|t| t.get("regular").map_or(false, |c| !c.is_empty()));
+            .any(|t| t.get("regular").is_some_and(|c| !c.is_empty()));
         if !has_regular {
             return Self::error_result(roll_number, &regulation, "No regular exam codes found");
         }
@@ -436,7 +439,7 @@ impl SemResultService {
                         if let Some(rd) = Self::parse_html(&h) {
                             // Only keep RCRV if it actually differs (avoids duplicate noise)
                             let differs = rd.result.iter().any(|(k, v)| {
-                                data.result.get(k).map_or(true, |cur| {
+                                data.result.get(k).is_none_or(|cur| {
                                     cur.grade != v.grade || v.rcrv
                                 })
                             });
@@ -519,7 +522,7 @@ impl SemResultService {
                     credits: cells[6].text().collect::<String>().trim().to_string(),
                     rcrv: cells
                         .last()
-                        .map_or(false, |c| c.text().collect::<String>().contains("Change in Grade")),
+                        .is_some_and(|c| c.text().collect::<String>().contains("Change in Grade")),
                 },
             );
         }

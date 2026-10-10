@@ -338,7 +338,7 @@ impl AllResultService {
                             let differs = rd.result.iter().any(|(k, v)| {
                                 data.result
                                     .get(k)
-                                    .map_or(true, |cur| cur.grade != v.grade || v.rcrv)
+                                    .is_none_or(|cur| cur.grade != v.grade || v.rcrv)
                             });
                             if differs && !rd.result.is_empty() {
                                 results.push(DetailedExamEntry {
@@ -418,7 +418,7 @@ impl AllResultService {
                     credits: cells[6].text().collect::<String>().trim().to_string(),
                     rcrv: cells
                         .last()
-                        .map_or(false, |c| c.text().collect::<String>().contains("Change in Grade")),
+                        .is_some_and(|c| c.text().collect::<String>().contains("Change in Grade")),
                 },
             );
         }

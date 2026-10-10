@@ -39,10 +39,6 @@ impl AcademicService {
         max
     }
 
-    pub async fn get_full_result(&self, roll: &str) -> AcademicResponse {
-        self.get_full_result_with_refresh(roll, false).await
-    }
-
     pub async fn get_full_result_with_refresh(
         &self,
         roll: &str,

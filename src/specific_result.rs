@@ -19,6 +19,8 @@ impl SpecificResultService {
         }
     }
 
+    // 7 query params mirror JNTUH's resultAction API shape; keep as-is.
+    #[allow(clippy::too_many_arguments)]
     pub async fn get_result(
         &self, exam_code: &str, etype: &str, result: &str, grad: &str,
         r#type: &str, degree: &str, htno: &str,
@@ -90,7 +92,7 @@ impl SpecificResultService {
                 total: cells[4].text().collect::<String>().trim().to_string(),
                 grade: cells[5].text().collect::<String>().trim().to_string(),
                 credits: cells[6].text().collect::<String>().trim().to_string(),
-                rcrv: cells.len() > 7 && cells.last().map_or(false, |c| c.text().collect::<String>().contains("Change in Grade")),
+                rcrv: cells.len() > 7 && cells.last().is_some_and(|c| c.text().collect::<String>().contains("Change in Grade")),
             });
         }
 
