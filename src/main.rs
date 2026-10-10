@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -161,6 +160,20 @@ async fn main() {
     let exam_codes = Arc::new(ExamCodes::new(&exam_codes_path));
     exam_codes.initialize(&client).await;
 
+    // Background refresh of exam codes every 6h so latest sems appear without restart
+    {
+        let ec = exam_codes.clone();
+        let bc = client.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(6 * 3600));
+            interval.tick().await; // first tick immediate, skip
+            loop {
+                interval.tick().await;
+                ec.refresh(&bc).await;
+            }
+        });
+    }
+
     let sem_results = Arc::new(SemResultService::new(client.clone(), exam_codes.clone()));
     let academic = Arc::new(AcademicService::new(sem_results.clone()));
     let all_results = Arc::new(AllResultService::new(client.clone(), exam_codes.clone()));
@@ -270,6 +283,8 @@ async fn health() -> Json<HealthResponse> {
 struct SemParams {
     htno: String,
     sem: String,
+    #[serde(default)]
+    refresh: bool,
 }
 
 #[utoipa::path(
@@ -284,13 +299,15 @@ async fn get_sem_result(
     state: axum::extract::State<AppState>,
     Query(params): Query<SemParams>,
 ) -> Json<CombinedSemesterResult> {
-    let result = state.sem_results.get_result(&params.htno, &params.sem).await;
+    let result = state.sem_results.get_result_with_refresh(&params.htno, &params.sem, params.refresh).await;
     Json(result)
 }
 
 #[derive(Deserialize, IntoParams)]
 struct AcademicParams {
     htno: String,
+    #[serde(default)]
+    refresh: bool,
 }
 
 #[utoipa::path(
@@ -305,7 +322,7 @@ async fn get_academic_results(
     state: axum::extract::State<AppState>,
     Query(params): Query<AcademicParams>,
 ) -> Json<AcademicResponse> {
-    let result = state.academic.get_full_result(&params.htno).await;
+    let result = state.academic.get_full_result_with_refresh(&params.htno, params.refresh).await;
     Json(result)
 }
 
@@ -346,13 +363,13 @@ fn default_concurrency() -> usize { 20 }
     path = "/classresult",
     params(ClassResultParams),
     responses(
-        (status = 200, description = "Batch results for a class/section within a roll number range", body = HashMap<String, ClassResultEntry>),
+        (status = 200, description = "Batch results for a class/section within a roll number range", body = std::collections::BTreeMap<String, ClassResultEntry>),
     )
 )]
 async fn get_class_results(
     state: axum::extract::State<AppState>,
     Query(params): Query<ClassResultParams>,
-) -> Json<HashMap<String, ClassResultEntry>> {
+) -> Json<std::collections::BTreeMap<String, ClassResultEntry>> {
     let concurrency = params.concurrency.clamp(1, 50);
     let roll_numbers = multiple::generate_roll_numbers(&params.start_htno, &params.end_htno);
     let results = state.class_results.fetch_all_students(&roll_numbers, &params.sem, concurrency).await;
@@ -410,11 +427,19 @@ async fn refresh_codes(
 )]
 async fn refresh_cache(
     state: axum::extract::State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Json<RefreshCacheResponse> {
-    state.sem_results.clear_cache().await;
+    let htno = params.get("htno").map(|s| s.as_str());
+    let sem = params.get("sem").map(|s| s.as_str());
+    let removed = if htno.is_none() && sem.is_none() {
+        state.sem_results.clear_cache().await;
+        0
+    } else {
+        state.sem_results.clear_cache_scoped(htno, sem).await
+    };
     Json(RefreshCacheResponse {
         status: "success".into(),
-        message: "Cleared cached results from memory".into(),
+        message: format!("Cleared cached results from memory ({} entries)", removed),
     })
 }
 

@@ -17,6 +17,40 @@ pub struct ExamCodes {
     disk_path: String,
 }
 
+/// JNTUH homepage mislabels, verified against actual result data.
+/// (degree, regulation, semester, year, exam_code) tuples to drop after every
+/// merge so the scraper can't re-add them. ONE examCode serves ONE exam:
+/// 1690 returns 156xx (3-2) subjects, so its "III Year I" homepage title is a
+/// JNTUH typo for "III Year II" (its RCRV row is correctly titled III-II).
+const MISLABELED: &[(&str, &str, &str, &str, &str)] = &[
+    ("btech", "R18", "3-1", "2023", "1690"),
+];
+
+fn apply_corrections(map: &mut ExamCodesMap) {
+    for (deg, reg, sem, yr, code) in MISLABELED {
+        if let Some(types) = map
+            .get_mut(*deg)
+            .and_then(|r| r.get_mut(*reg))
+            .and_then(|s| s.get_mut(*sem))
+            .and_then(|y| y.get_mut(*yr))
+        {
+            for codes in types.values_mut() {
+                if codes.iter().any(|c| c == code) {
+                    codes.retain(|c| c != code);
+                    tracing::info!(
+                        "Dropped mislabeled examCode {} from {}/{}/{}/{}",
+                        code,
+                        deg,
+                        reg,
+                        sem,
+                        yr
+                    );
+                }
+            }
+        }
+    }
+}
+
 impl ExamCodes {
     pub fn new(disk_path: &str) -> Self {
         Self {
@@ -28,39 +62,53 @@ impl ExamCodes {
 
     pub async fn initialize(&self, client: &Client) {
         let disk_codes = Self::load_from_disk(&self.disk_path);
-        let disk_count: usize = disk_codes.values()
-            .flat_map(|r| r.values())
-            .flat_map(|s| s.values())
-            .flat_map(|y| y.values())
-            .flat_map(|t| t.values())
-            .map(|c| c.len())
-            .sum();
+        let disk_count: usize = Self::count_codes(&disk_codes);
 
         let scraped_codes = Self::fetch_from_jntuh(client).await;
-        let scraped_count: usize = scraped_codes.values()
-            .flat_map(|r| r.values())
-            .flat_map(|s| s.values())
-            .flat_map(|y| y.values())
-            .flat_map(|t| t.values())
-            .map(|c| c.len())
-            .sum();
+        let scraped_count: usize = Self::count_codes(&scraped_codes);
 
-        let merged = Self::merge_codes(scraped_codes, disk_codes);
-        let total_count: usize = merged.values()
-            .flat_map(|r| r.values())
-            .flat_map(|s| s.values())
-            .flat_map(|y| y.values())
-            .flat_map(|t| t.values())
-            .map(|c| c.len())
-            .sum();
+        let mut merged = Self::merge_codes(scraped_codes, disk_codes);
+        apply_corrections(&mut merged);
+        let total_count: usize = Self::count_codes(&merged);
 
         {
             let mut cache = self.inner.write();
-            *cache = merged;
+            *cache = merged.clone();
         }
         *self.last_refresh.lock().await = Instant::now();
 
+        // Persist merged codes so restarts keep freshly scraped exam codes
+        Self::save_to_disk(&self.disk_path, &merged);
+
         tracing::info!("Loaded {} exam codes (disk: {}, jntuh: {})", total_count, disk_count, scraped_count);
+    }
+
+    fn count_codes(map: &ExamCodesMap) -> usize {
+        map.values()
+            .flat_map(|r| r.values())
+            .flat_map(|s| s.values())
+            .flat_map(|y| y.values())
+            .flat_map(|t| t.values())
+            .map(|c| c.len())
+            .sum()
+    }
+
+    fn save_to_disk(path: &str, map: &ExamCodesMap) {
+        let payload = serde_json::json!({
+            "data": map,
+            "timestamp": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0),
+        });
+        match serde_json::to_string_pretty(&payload) {
+            Ok(s) => {
+                if let Err(e) = std::fs::write(path, s) {
+                    tracing::warn!("Failed to persist exam codes to {}: {}", path, e);
+                }
+            }
+            Err(e) => tracing::warn!("Failed to serialize exam codes: {}", e),
+        }
     }
 
     fn load_from_disk(path: &str) -> ExamCodesMap {
@@ -166,7 +214,7 @@ impl ExamCodes {
                     None => continue,
                 };
 
-                for regulation in &["R18", "R22"] {
+                for regulation in &["R17", "R18", "R22", "R25"] {
                     if !result_text.contains(regulation) {
                         continue;
                     }
@@ -205,21 +253,17 @@ impl ExamCodes {
     pub async fn refresh(&self, client: &Client) {
         let disk_codes = Self::load_from_disk(&self.disk_path);
         let scraped_codes = Self::fetch_from_jntuh(client).await;
-        let merged = Self::merge_codes(scraped_codes, disk_codes);
+        let mut merged = Self::merge_codes(scraped_codes, disk_codes);
+        apply_corrections(&mut merged);
 
-        let total_count: usize = merged.values()
-            .flat_map(|r| r.values())
-            .flat_map(|s| s.values())
-            .flat_map(|y| y.values())
-            .flat_map(|t| t.values())
-            .map(|c| c.len())
-            .sum();
+        let total_count: usize = Self::count_codes(&merged);
 
         {
             let mut cache = self.inner.write();
-            *cache = merged;
+            *cache = merged.clone();
         }
         *self.last_refresh.lock().await = Instant::now();
+        Self::save_to_disk(&self.disk_path, &merged);
 
         tracing::info!("Refreshed exam codes: {} total", total_count);
     }

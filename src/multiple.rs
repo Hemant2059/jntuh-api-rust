@@ -1,5 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
+
+use futures::stream::{FuturesUnordered, StreamExt};
 
 use crate::sem_result::SemResultService;
 use crate::types::*;
@@ -51,28 +53,27 @@ impl ClassResultService {
 
     pub async fn fetch_all_students(
         &self, roll_numbers: &[String], semester: &str, concurrency: usize,
-    ) -> HashMap<String, ClassResultEntry> {
+    ) -> BTreeMap<String, ClassResultEntry> {
         let sem = Arc::new(tokio::sync::Semaphore::new(concurrency.clamp(1, 50)));
-        let mut tasks = Vec::new();
+        let mut unordered = FuturesUnordered::new();
 
         for rn in roll_numbers {
-            let p = sem.clone().acquire_owned().await;
+            let sem = sem.clone();
             let svc = self.sem_results.clone();
             let r = rn.clone();
             let s = semester.to_string();
-            let r_arg = r.clone();
-            let s_arg = s.clone();
-            tasks.push(tokio::spawn(async move {
-                let _p = p;
-                (r, svc.get_result(&r_arg, &s_arg).await)
+            unordered.push(tokio::spawn(async move {
+                let _p = sem.acquire_owned().await.ok()?;
+                let res = svc.get_result(&r, &s).await;
+                Some((r, res))
             }));
         }
 
-        let mut map: HashMap<String, ClassResultEntry> = HashMap::new();
-        for task in tasks {
-            let (roll, res) = match task.await {
-                Ok(r) => r,
-                Err(_) => continue,
+        let mut map: BTreeMap<String, ClassResultEntry> = BTreeMap::new();
+        while let Some(task) = unordered.next().await {
+            let (roll, res) = match task {
+                Ok(Some(v)) => v,
+                _ => continue,
             };
 
             let entry = if res.result.is_empty() && res.history.is_empty() {
@@ -95,8 +96,6 @@ impl ClassResultService {
             map.insert(roll, entry);
         }
 
-        let mut sorted: Vec<_> = map.into_iter().collect();
-        sorted.sort_by_key(|(k, _)| k.clone());
-        sorted.into_iter().collect()
+        map
     }
 }
